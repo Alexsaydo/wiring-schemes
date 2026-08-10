@@ -94,9 +94,16 @@ function colorOptions(selected=''){
   return `<option value="">Выберите цвет</option>`+COLORS.map(c=>`<option value="${c[0]}" ${c[0]===selected?'selected':''}>${c[1]}</option>`).join('');
 }
 
+function swatchStyle(c){
+  if(!c) return '';
+  if(!c[0].startsWith('white-')) return `background:${c[2]}`;
+  // Сделаем полоски достаточно широкими и повторяющимися, чтобы рисунок жилы был заметен даже на маленьком экране.
+  return `background:repeating-linear-gradient(90deg,#fff 0 9px,${c[2]} 9px 18px)`;
+}
+
 function contactRow(r,i){
   const c=COLORS.find(x=>x[0]===r.colorId);
-  const shown=c?`<span class="swatch ${c[0]}" style="background:${c[2]}"></span><span class="colorText">${esc(c[1])}</span>`:'Не выбран';
+  const shown=c?`<span class="swatch ${c[0]}" style="${swatchStyle(c)}"></span><span class="colorText">${esc(c[1])}</span>`:'Не выбран';
   return `<div class="row"><div class="contactField"><label>Контакт</label><input class="contact" data-i="${i}" value="${esc(r.contact)}" placeholder="Например: GND"></div><div class="colorField"><label>Цвет UTP</label>${c?`<div class="colorview" data-color="${i}">${shown}</div><select class="colorSelect hidden" data-i="${i}">${colorOptions(r.colorId)}</select>`:`<select class="colorSelect" data-i="${i}">${colorOptions()}</select>`}</div><div class="rowButtons">${c?`<button class="edit" data-i="${i}">ред.</button>`:''}<button class="del" data-i="${i}">×</button></div></div>`;
 }
 
