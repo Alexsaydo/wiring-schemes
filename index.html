@@ -15,5 +15,28 @@
 @media(max-width:500px){#app{padding-left:12px;padding-right:12px}.row{grid-template-columns:minmax(82px,1fr) minmax(0,1.35fr) auto;gap:7px}.colorview{font-size:14px;padding-left:8px;padding-right:7px}.edit{padding:0 9px}.cableCard{padding:13px}.sectionHead{align-items:flex-start}}
 </style>
 </head>
-<body><div id="app"></div><div id="toast" class="toast"></div><script src="app.js"></script><script>if('serviceWorker'in navigator)addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));</script></body>
+<body><div id="app"></div><div id="toast" class="toast"></div><script src="app.js"></script><script>
+/* После успешной авторизации не выбрасываем пользователя на экран пароля,
+   если облачная синхронизация временно недоступна. */
+window.loginScreen=function(message=''){
+  app.innerHTML=`<div class="card login"><div class="plug">🔌</div><h1>Схемы расключения</h1><p class="muted">Введите пароль для доступа к общей базе схем.</p><label>Пароль</label><input id="password" type="password" placeholder="Пароль" autocomplete="current-password"><button class="primary" id="loginButton">Войти</button><div id="loginError" class="muted error">${esc(message)}</div></div>`;
+  const password=document.getElementById('password');
+  const button=document.getElementById('loginButton');
+  const error=document.getElementById('loginError');
+  async function go(){
+    if(!password.value.trim()){error.textContent='Введите пароль.';return;}
+    button.disabled=true; button.textContent='Входим…'; error.textContent='';
+    try{
+      await login(password.value);
+      try{ await syncPending(); }catch(e){ console.warn('sync after login',e); }
+      try{ await pullCloud(); }catch(e){ console.warn('cloud load after login',e); toast('Вход выполнен, но база пока недоступна'); }
+      render();
+    }catch(e){
+      button.disabled=false; button.textContent='Войти';
+      error.textContent=!navigator.onLine?'Нет интернета для первого входа.':(e?.message||'Не удалось войти.');
+    }
+  }
+  button.onclick=go; password.onkeydown=e=>{if(e.key==='Enter')go()}; password.focus();
+};
+</script><script>if('serviceWorker'in navigator)addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));</script></body>
 </html>
