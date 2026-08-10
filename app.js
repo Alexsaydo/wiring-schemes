@@ -32,7 +32,7 @@ async function api(path, options={}){
   if(auth?.access_token) headers.Authorization='Bearer '+auth.access_token;
   const res=await fetch(SUPABASE_URL+path,{...options,headers});
   let data=null; try{data=await res.json();}catch(e){}
-  if(!res.ok){ const err=new Error(data?.msg||data?.message||data?.error_description||'Ошибка соединения'); err.status=res.status; throw err; }
+  if(!res.ok){ const err=new Error(data?.msg||data?.message||data?.error_description||data?.error||'Ошибка соединения'); err.status=res.status; err.details=data; throw err; }
   return data;
 }
 
@@ -53,20 +53,28 @@ async function saveCloud(device, silent=false){
   if(!auth?.access_token || !navigator.onLine) return false;
   const pendingId=device.id;
   try{
+    const userId=auth.user?.id;
+    if(!userId) throw new Error('Не найден пользователь Supabase');
     if(String(device.id).startsWith('local-')){
-      const rows=await api('/rest/v1/devices',{method:'POST',headers:{Prefer:'return=representation'},body:JSON.stringify({name:device.name,contacts:device.contacts})});
-      if(rows?.[0]) Object.assign(device,rows[0]);
+      const rows=await api('/rest/v1/devices',{method:'POST',headers:{Prefer:'return=representation'},body:JSON.stringify({name:device.name,contacts:device.contacts,user_id:userId})});
+      if(rows?.[0]){
+        const oldId=device.id;
+        Object.assign(device,rows[0]);
+        pending=pending.filter(x=>x!==oldId);
+        markPending(device.id);
+        clearPending(oldId);
+      }
     }else{
-      await api('/rest/v1/devices?id=eq.'+encodeURIComponent(device.id),{method:'PATCH',body:JSON.stringify({name:device.name,contacts:device.contacts,updated_at:new Date().toISOString()})});
+      await api('/rest/v1/devices?id=eq.'+encodeURIComponent(device.id),{method:'PATCH',headers:{Prefer:'return=representation'},body:JSON.stringify({name:device.name,contacts:device.contacts,user_id:userId,updated_at:new Date().toISOString()})});
     }
     write(LOCAL_KEY,devices);
-    clearPending(pendingId);
+    clearPending(device.id);
     if(!silent) toast('Синхронизировано');
     return true;
   }catch(e){
     markPending(pendingId);
     if(!silent) toast('Ошибка синхронизации');
-    console.warn('sync',e);
+    console.warn('sync',e.status,e.details||e);
     return false;
   }
 }
