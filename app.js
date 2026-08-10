@@ -4,22 +4,14 @@ const SUPABASE_EMAIL = 'andreev.bu@gmail.com';
 const AUTH_KEY = 'wiring-auth-v3';
 const LOCAL_KEY = 'wiring-local-v5';
 const PENDING_KEY = 'wiring-pending-v2';
-
 const CABLES = {
-  utp4:{name:'UTP 4',subtitle:'4 пары · 8 жил',colors:[
-    ['white-orange','Бело-оранжевый','#f97316'],['orange','Оранжевый','#f97316'],
-    ['white-green','Бело-зелёный','#22c55e'],['green','Зелёный','#22c55e'],
-    ['white-blue','Бело-синий','#3b82f6'],['blue','Синий','#3b82f6'],
-    ['white-brown','Бело-коричневый','#92400e'],['brown','Коричневый','#92400e']]},
-  utp2:{name:'UTP2',subtitle:'Оранжевая + синяя пары · 4 жилы',colors:[
-    ['white-orange','Бело-оранжевый','#f97316'],['orange','Оранжевый','#f97316'],
-    ['white-blue','Бело-синий','#3b82f6'],['blue','Синий','#3b82f6']]},
+  utp4:{name:'UTP 4',subtitle:'4 пары · 8 жил',colors:[['white-orange','Бело-оранжевый','#f97316'],['orange','Оранжевый','#f97316'],['white-green','Бело-зелёный','#22c55e'],['green','Зелёный','#22c55e'],['white-blue','Бело-синий','#3b82f6'],['blue','Синий','#3b82f6'],['white-brown','Бело-коричневый','#92400e'],['brown','Коричневый','#92400e']]},
+  utp2:{name:'UTP2',subtitle:'Оранжевая + синяя пары · 4 жилы',colors:[['white-orange','Бело-оранжевый','#f97316'],['orange','Оранжевый','#f97316'],['white-blue','Бело-синий','#3b82f6'],['blue','Синий','#3b82f6']]},
   shvvp:{name:'ШВВП',subtitle:'2 жилы',colors:[['brown','Коричневый','#92400e'],['blue','Синий','#3b82f6']]},
   kspv:{name:'КСПВ',subtitle:'2 жилы',colors:[['brown','Коричневый','#92400e'],['white','Белый','#f8fafc']]}
 };
-
 const app=document.getElementById('app');
-let auth=read(AUTH_KEY), devices=read(LOCAL_KEY)||[], pending=read(PENDING_KEY)||[], currentId=null, syncTimer=null;
+let auth=read(AUTH_KEY),devices=read(LOCAL_KEY)||[],pending=read(PENDING_KEY)||[],currentId=null,syncTimer=null;
 function read(k){try{return JSON.parse(localStorage.getItem(k))}catch(e){return null}}
 function write(k,v){localStorage.setItem(k,JSON.stringify(v))}
 function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
@@ -29,85 +21,23 @@ function markPending(id){if(!pending.includes(id))pending.push(id);write(PENDING
 function clearPending(id){pending=pending.filter(x=>x!==id);write(PENDING_KEY,pending)}
 function cable(id){return CABLES[id]||null}
 function colorFor(row){return cable(row.cableId)?.colors.find(x=>x[0]===row.colorId)}
-function normalizeDevice(d){
-  const legacyCable=d.cableId&&CABLES[d.cableId]?d.cableId:null;
-  d.contacts=(Array.isArray(d.contacts)?d.contacts:[]).map(r=>({contact:r.contact||'',cableId:r.cableId||(legacyCable||''),colorId:r.colorId||''}));
-  d.cableId='mixed';
-  return d;
-}
+function normalizeDevice(d){const legacy=d.cableId&&CABLES[d.cableId]?d.cableId:null;d.contacts=(Array.isArray(d.contacts)?d.contacts:[]).map(r=>({contact:r.contact||'',cableId:r.cableId||(legacy||''),colorId:r.colorId||''}));d.cableId='mixed';return d}
 function normalizeAll(){devices=devices.map(normalizeDevice);write(LOCAL_KEY,devices)}
 normalizeAll();
-
-async function api(path,options={}){
-  const headers={apikey:SUPABASE_KEY,'Content-Type':'application/json',...(options.headers||{})};
-  if(auth?.access_token)headers.Authorization='Bearer '+auth.access_token;
-  const res=await fetch(SUPABASE_URL+path,{...options,headers});
-  let data=null;try{data=await res.json()}catch(e){}
-  if(!res.ok){const err=new Error(data?.msg||data?.message||data?.error_description||data?.error||'Ошибка соединения');err.status=res.status;err.details=data;throw err}
-  return data;
-}
+async function api(path,options={}){const headers={apikey:SUPABASE_KEY,'Content-Type':'application/json',...(options.headers||{})};if(auth?.access_token)headers.Authorization='Bearer '+auth.access_token;const res=await fetch(SUPABASE_URL+path,{...options,headers});let data=null;try{data=await res.json()}catch(e){}if(!res.ok){const err=new Error(data?.msg||data?.message||data?.error_description||data?.error||'Ошибка соединения');err.status=res.status;err.details=data;throw err}return data}
 async function login(password){auth=await api('/auth/v1/token?grant_type=password',{method:'POST',body:JSON.stringify({email:SUPABASE_EMAIL,password})});write(AUTH_KEY,auth)}
-async function pullCloud(){
-  if(!auth?.access_token||!navigator.onLine)return false;
-  const rows=await api('/rest/v1/devices?select=id,name,cable_id,contacts,created_at,updated_at&order=created_at.asc');
-  devices=rows.map(d=>normalizeDevice({id:d.id,name:d.name,cableId:d.cable_id,contacts:d.contacts,created_at:d.created_at,updated_at:d.updated_at}));
-  write(LOCAL_KEY,devices);return true;
-}
-async function saveCloud(d,silent=false){
-  if(!auth?.access_token||!navigator.onLine)return false;
-  const pendingId=d.id;
-  try{
-    const userId=auth.user?.id;if(!userId)throw new Error('Не найден пользователь Supabase');
-    const payload={name:d.name,cable_id:'mixed',contacts:d.contacts,user_id:userId,updated_at:new Date().toISOString()};
-    if(String(d.id).startsWith('local-')){
-      const rows=await api('/rest/v1/devices',{method:'POST',headers:{Prefer:'return=representation'},body:JSON.stringify(payload)});
-      if(rows?.[0]){const old=d.id;Object.assign(d,{id:rows[0].id,created_at:rows[0].created_at,updated_at:rows[0].updated_at,cableId:'mixed'});clearPending(old);markPending(d.id)}
-    }else await api('/rest/v1/devices?id=eq.'+encodeURIComponent(d.id),{method:'PATCH',headers:{Prefer:'return=representation'},body:JSON.stringify(payload)});
-    write(LOCAL_KEY,devices);clearPending(d.id);if(!silent)toast('Синхронизировано');return true;
-  }catch(e){markPending(pendingId);if(!silent)toast('Ошибка синхронизации');console.warn('sync',e.status,e.details||e);return false}
-}
+async function pullCloud(){if(!auth?.access_token||!navigator.onLine)return false;const rows=await api('/rest/v1/devices?select=id,name,cable_id,contacts,created_at,updated_at&order=created_at.asc');devices=rows.map(d=>normalizeDevice({id:d.id,name:d.name,cableId:d.cable_id,contacts:d.contacts,created_at:d.created_at,updated_at:d.updated_at}));write(LOCAL_KEY,devices);return true}
+async function saveCloud(d,silent=false){if(!auth?.access_token||!navigator.onLine)return false;const pendingId=d.id;try{const userId=auth.user?.id;if(!userId)throw new Error('Не найден пользователь Supabase');const payload={name:d.name,cable_id:'mixed',contacts:d.contacts,user_id:userId,updated_at:new Date().toISOString()};if(String(d.id).startsWith('local-')){const rows=await api('/rest/v1/devices',{method:'POST',headers:{Prefer:'return=representation'},body:JSON.stringify(payload)});if(rows?.[0]){const old=d.id;Object.assign(d,{id:rows[0].id,created_at:rows[0].created_at,updated_at:rows[0].updated_at,cableId:'mixed'});clearPending(old);markPending(d.id)}}else await api('/rest/v1/devices?id=eq.'+encodeURIComponent(d.id),{method:'PATCH',headers:{Prefer:'return=representation'},body:JSON.stringify(payload)});write(LOCAL_KEY,devices);clearPending(d.id);if(!silent)toast('Синхронизировано');return true}catch(e){markPending(pendingId);if(!silent)toast('Ошибка синхронизации');console.warn('sync',e.status,e.details||e);return false}}
 async function syncPending(){if(!auth?.access_token||!navigator.onLine||!pending.length)return;for(const id of [...pending]){const d=devices.find(x=>x.id===id);if(d)await saveCloud(d,true);else clearPending(id)}}
 function saveLocal(d){write(LOCAL_KEY,devices);markPending(d.id);clearTimeout(syncTimer);syncTimer=setTimeout(()=>saveCloud(d),450);if(!navigator.onLine)toast('Сохранено на устройстве')}
-
-function loginScreen(message=''){
-  app.innerHTML=`<div class="card login"><div class="plug">🔌</div><h1>Схемы расключения</h1><p class="muted">Введите пароль для доступа к общей базе схем.</p><label>Пароль</label><input id="password" type="password" placeholder="Пароль" autocomplete="current-password"><button class="primary" id="loginButton">Войти</button><div id="loginError" class="muted error">${esc(message)}</div></div>`;
-  const p=document.getElementById('password'),b=document.getElementById('loginButton'),e=document.getElementById('loginError');
-  async function go(){if(!p.value.trim()){e.textContent='Введите пароль.';return}b.disabled=true;b.textContent='Входим…';e.textContent='';try{await login(p.value);try{await syncPending()}catch(x){}try{await pullCloud()}catch(x){console.warn('cloud load',x);toast('Вход выполнен, но база пока недоступна')}render()}catch(x){b.disabled=false;b.textContent='Войти';e.textContent=!navigator.onLine?'Нет интернета для первого входа.':(x?.message||'Не удалось войти.')}}
-  b.onclick=go;p.onkeydown=x=>{if(x.key==='Enter')go()};p.focus();
-}
-function deviceCableLabel(d){
-  const ids=[...new Set(d.contacts.map(r=>r.cableId).filter(Boolean))];
-  if(ids.length===1&&CABLES[ids[0]])return CABLES[ids[0]].name;
-  if(ids.length>1)return 'Смешанное подключение';
-  return 'Кабель не выбран';
-}
-function homeScreen(){
-  app.innerHTML=`<div class="header"><h1>Схемы расключения</h1><span class="cloud">☁</span></div>`+
-  (devices.length?devices.map(d=>`<button class="device" data-id="${esc(d.id)}"><span class="icon">⌁</span><span class="deviceMain"><span class="name">${esc(d.name)}</span><span class="deviceCable">${esc(deviceCableLabel(d))}</span></span><span class="count">${d.contacts.length} контактов</span><span class="chev">›</span></button>`).join(''):`<div class="card empty"><div class="plug">🔌</div><h2>Пока ничего нет</h2><p class="muted">Добавьте устройство и для каждого контакта выберите свой кабель и жилу.</p></div>`)+`<button class="primary addDevice" id="addDevice">＋ Новое устройство</button>`;
-  document.querySelectorAll('[data-id]').forEach(e=>e.onclick=()=>{currentId=e.dataset.id;render()});
-  document.getElementById('addDevice').onclick=()=>{const name=prompt('Введите название устройства:');if(name?.trim()){const d={id:'local-'+uid(),name:name.trim(),cableId:'mixed',contacts:[]};devices.push(d);saveLocal(d);currentId=d.id;render()}};
-}
+function loginScreen(message=''){app.innerHTML=`<div class="card login"><div class="plug">🔌</div><h1>Схемы расключения</h1><p class="muted">Введите пароль для доступа к общей базе схем.</p><label>Пароль</label><input id="password" type="password" placeholder="Пароль" autocomplete="current-password"><button class="primary" id="loginButton">Войти</button><div id="loginError" class="muted error">${esc(message)}</div></div>`;const p=document.getElementById('password'),b=document.getElementById('loginButton'),e=document.getElementById('loginError');async function go(){if(!p.value.trim()){e.textContent='Введите пароль.';return}b.disabled=true;b.textContent='Входим…';e.textContent='';try{await login(p.value);try{await syncPending()}catch(x){}try{await pullCloud()}catch(x){console.warn('cloud load',x);toast('Вход выполнен, но база пока недоступна')}render()}catch(x){b.disabled=false;b.textContent='Войти';e.textContent=!navigator.onLine?'Нет интернета для первого входа.':(x?.message||'Не удалось войти.')}}b.onclick=go;p.onkeydown=x=>{if(x.key==='Enter')go()};p.focus()}
+function deviceCableLabel(d){const ids=[...new Set(d.contacts.map(r=>r.cableId).filter(Boolean))];if(ids.length===1&&CABLES[ids[0]])return CABLES[ids[0]].name;if(ids.length>1)return 'Смешанное подключение';return 'Кабель не выбран'}
+function homeScreen(){app.innerHTML=`<div class="header"><h1>Схемы расключения</h1><span class="cloud">☁</span></div>`+(devices.length?devices.map(d=>`<button class="device" data-id="${esc(d.id)}"><span class="icon">⌁</span><span class="deviceMain"><span class="name">${esc(d.name)}</span><span class="deviceCable">${esc(deviceCableLabel(d))}</span></span><span class="count">${d.contacts.length} контактов</span><span class="chev">›</span></button>`).join(''):`<div class="card empty"><div class="plug">🔌</div><h2>Пока ничего нет</h2><p class="muted">Добавьте устройство и для каждого контакта выберите свой кабель и жилу.</p></div>`)+`<button class="primary addDevice" id="addDevice">＋ Новое устройство</button>`;document.querySelectorAll('[data-id]').forEach(e=>e.onclick=()=>{currentId=e.dataset.id;render()});document.getElementById('addDevice').onclick=()=>{const name=prompt('Введите название устройства:');if(name?.trim()){const d={id:'local-'+uid(),name:name.trim(),cableId:'mixed',contacts:[]};devices.push(d);saveLocal(d);currentId=d.id;render()}}}
 function cableOptions(selected=''){return `<option value="">Выберите кабель</option>`+Object.entries(CABLES).map(([id,c])=>`<option value="${id}" ${id===selected?'selected':''}>${esc(c.name)}</option>`).join('')}
 function colorOptions(row){const c=cable(row.cableId);return `<option value="">Выберите жилу</option>`+(c?c.colors.map(x=>`<option value="${x[0]}" ${x[0]===row.colorId?'selected':''}>${esc(x[1])}</option>`).join(''):'')}
 function swatchClass(id){return id==='white'?'white':id}
-function contactRow(d,r,i){
-  const c=colorFor(r),shown=c?`<span class="swatch ${swatchClass(c[0])}" style="background:${c[2]}"></span><span class="colorText">${esc(c[1])}</span>`:'Не выбрана';
-  return `<div class="row"><div class="contactField"><label>Контакт</label><input class="contact" data-i="${i}" value="${esc(r.contact)}" placeholder="Например: GND"></div><div class="cableField"><label>Кабель</label><select class="cableSelect" data-i="${i}">${cableOptions(r.cableId)}</select></div><div class="colorField"><label>Цвет жилы</label>${c?`<div class="colorview" data-color="${i}">${shown}</div><select class="colorSelect hidden" data-i="${i}">${colorOptions(r)}</select>`:`<select class="colorSelect" data-i="${i}" disabled>${colorOptions(r)}</select>`}</div><div class="rowButtons">${c?`<button class="edit" data-i="${i}">ред.</button>`:''}<button class="del" data-i="${i}">×</button></div></div>`;
-}
-function editorScreen(){
-  const d=devices.find(x=>x.id===currentId);if(!d){currentId=null;return render()}normalizeDevice(d);
-  app.innerHTML=`<div class="header"><button class="back" id="back">‹</button><div class="titleBlock"><h1>${esc(d.name)}</h1><span class="titleCable">${esc(deviceCableLabel(d))}</span></div></div><div class="actions"><button class="secondary" id="rename">✎ Переименовать</button><button class="danger" id="remove">Удалить</button></div><div class="card"><div class="sectionHead"><div><b>Расключение</b><div class="muted subtitle">Для каждого контакта — свой кабель и цвет жилы</div></div></div>${d.contacts.length?d.contacts.map((r,i)=>contactRow(d,r,i)).join(''):`<div class="empty small"><span class="muted">Контактов пока нет.</span></div>`}<button class="secondary add" id="addContact">＋ Добавить контакт</button></div>`;
-  document.getElementById('back').onclick=()=>{currentId=null;render()};
-  document.getElementById('rename').onclick=()=>{const n=prompt('Новое название:',d.name);if(n?.trim()){d.name=n.trim();saveLocal(d);render()}};
-  document.getElementById('remove').onclick=async()=>{if(!confirm('Удалить устройство и его схему?'))return;try{if(!String(d.id).startsWith('local-'))await api('/rest/v1/devices?id=eq.'+encodeURIComponent(d.id),{method:'DELETE'})}catch(e){}clearPending(d.id);devices=devices.filter(x=>x!==d);write(LOCAL_KEY,devices);currentId=null;render()};
-  document.getElementById('addContact').onclick=()=>{d.contacts.push({contact:'',cableId:'',colorId:''});saveLocal(d);render()};
-  document.querySelectorAll('.contact').forEach(e=>e.oninput=()=>{d.contacts[+e.dataset.i].contact=e.value;saveLocal(d)});
-  document.querySelectorAll('.cableSelect').forEach(e=>e.onchange=()=>{const r=d.contacts[+e.dataset.i];r.cableId=e.value;r.colorId='';saveLocal(d);render()});
-  document.querySelectorAll('.edit').forEach(e=>e.onclick=()=>{const i=+e.dataset.i,sel=document.querySelector(`.colorSelect[data-i="${i}"]`);sel.classList.remove('hidden');document.querySelector(`[data-color="${i}"]`)?.classList.add('hidden');sel.focus()});
-  document.querySelectorAll('.colorSelect').forEach(e=>e.onchange=()=>{d.contacts[+e.dataset.i].colorId=e.value;saveLocal(d);render()});
-  document.querySelectorAll('.del').forEach(e=>e.onclick=()=>{d.contacts.splice(+e.dataset.i,1);saveLocal(d);render()});
-}
+function contactRow(d,r,i){const c=colorFor(r),shown=c?`<span class="swatch ${swatchClass(c[0])}" style="background:${c[2]}"></span><span class="colorText">${esc(c[1])}</span>`:'Не выбрана';return `<div class="row"><div class="contactField"><label>Контакт</label><input class="contact" data-i="${i}" value="${esc(r.contact)}" placeholder="Например: GND"></div><div class="wireFields"><div><label>Кабель</label><select class="cableSelect" data-i="${i}">${cableOptions(r.cableId)}</select></div><div><label>Цвет жилы</label>${c?`<div class="colorview" data-color="${i}">${shown}</div><select class="colorSelect hidden" data-i="${i}">${colorOptions(r)}</select>`:`<select class="colorSelect" data-i="${i}" disabled>${colorOptions(r)}</select>`}</div></div><div class="rowButtons">${c?`<button class="edit" data-i="${i}">ред.</button>`:''}<button class="del" data-i="${i}">×</button></div></div>`}
+function editorScreen(){const d=devices.find(x=>x.id===currentId);if(!d){currentId=null;return render()}normalizeDevice(d);app.innerHTML=`<div class="header"><button class="back" id="back">‹</button><div class="titleBlock"><h1>${esc(d.name)}</h1><span class="titleCable">${esc(deviceCableLabel(d))}</span></div></div><div class="actions"><button class="secondary" id="rename">✎ Переименовать</button><button class="danger" id="remove">Удалить</button></div><div class="card"><div class="sectionHead"><div><b>Расключение</b><div class="muted subtitle">Для каждого контакта — свой кабель и цвет жилы</div></div></div>${d.contacts.length?d.contacts.map((r,i)=>contactRow(d,r,i)).join(''):`<div class="empty small"><span class="muted">Контактов пока нет.</span></div>`}<button class="secondary add" id="addContact">＋ Добавить контакт</button></div>`;document.getElementById('back').onclick=()=>{currentId=null;render()};document.getElementById('rename').onclick=()=>{const n=prompt('Новое название:',d.name);if(n?.trim()){d.name=n.trim();saveLocal(d);render()}};document.getElementById('remove').onclick=async()=>{if(!confirm('Удалить устройство и его схему?'))return;try{if(!String(d.id).startsWith('local-'))await api('/rest/v1/devices?id=eq.'+encodeURIComponent(d.id),{method:'DELETE'})}catch(e){}clearPending(d.id);devices=devices.filter(x=>x!==d);write(LOCAL_KEY,devices);currentId=null;render()};document.getElementById('addContact').onclick=()=>{d.contacts.push({contact:'',cableId:'',colorId:''});saveLocal(d);render()};document.querySelectorAll('.contact').forEach(e=>e.oninput=()=>{d.contacts[+e.dataset.i].contact=e.value;saveLocal(d)});document.querySelectorAll('.cableSelect').forEach(e=>e.onchange=()=>{const r=d.contacts[+e.dataset.i];r.cableId=e.value;r.colorId='';saveLocal(d);render()});document.querySelectorAll('.edit').forEach(e=>e.onclick=()=>{const i=+e.dataset.i,sel=document.querySelector(`.colorSelect[data-i="${i}"]`);sel.classList.remove('hidden');document.querySelector(`[data-color="${i}"]`)?.classList.add('hidden');sel.focus()});document.querySelectorAll('.colorSelect').forEach(e=>e.onchange=()=>{d.contacts[+e.dataset.i].colorId=e.value;saveLocal(d);render()});document.querySelectorAll('.del').forEach(e=>e.onclick=()=>{d.contacts.splice(+e.dataset.i,1);saveLocal(d);render()})}
 function render(){auth?.access_token?(currentId?editorScreen():homeScreen()):loginScreen()}
 async function boot(){if(auth?.access_token&&navigator.onLine){try{await syncPending();await pullCloud()}catch(e){console.warn('boot cloud',e)}}render()}
-window.addEventListener('online',async()=>{if(auth?.access_token){try{await syncPending();await pullCloud();render()}catch(e){}}});
-boot();
+window.addEventListener('online',async()=>{if(auth?.access_token){try{await syncPending();await pullCloud();render()}catch(e){}}});boot();
