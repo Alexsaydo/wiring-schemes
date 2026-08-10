@@ -16,8 +16,6 @@
 </style>
 </head>
 <body><div id="app"></div><div id="toast" class="toast"></div><script src="app.js"></script><script>
-/* После успешной авторизации не выбрасываем пользователя на экран пароля,
-   если облачная синхронизация временно недоступна. */
 window.loginScreen=function(message=''){
   app.innerHTML=`<div class="card login"><div class="plug">🔌</div><h1>Схемы расключения</h1><p class="muted">Введите пароль для доступа к общей базе схем.</p><label>Пароль</label><input id="password" type="password" placeholder="Пароль" autocomplete="current-password"><button class="primary" id="loginButton">Войти</button><div id="loginError" class="muted error">${esc(message)}</div></div>`;
   const password=document.getElementById('password');
@@ -38,5 +36,6 @@ window.loginScreen=function(message=''){
   }
   button.onclick=go; password.onkeydown=e=>{if(e.key==='Enter')go()}; password.focus();
 };
+window.loginScreen();
 </script><script>if('serviceWorker'in navigator)addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));</script></body>
 </html>
