@@ -3,6 +3,7 @@ const SUPABASE_KEY = 'sb_publishable_3-YQ35kD_JOBz_5g1JYTuA_r0b3_QdY';
 const SUPABASE_EMAIL = 'andreev.bu@gmail.com';
 const AUTH_KEY = 'wiring-auth-v3';
 const LOCAL_KEY = 'wiring-local-v3';
+const PENDING_KEY = 'wiring-pending-v1';
 
 const COLORS = [
   ['white-orange','Бело-оранжевый','#f97316'], ['orange','Оранжевый','#f97316'],
@@ -14,6 +15,7 @@ const COLORS = [
 const app = document.getElementById('app');
 let auth = read(AUTH_KEY);
 let devices = read(LOCAL_KEY) || [];
+let pending = read(PENDING_KEY) || [];
 let currentId = null;
 let syncTimer = null;
 
@@ -21,7 +23,9 @@ function read(key){ try { return JSON.parse(localStorage.getItem(key)); } catch(
 function write(key,value){ localStorage.setItem(key, JSON.stringify(value)); }
 function esc(s){ return String(s ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m])); }
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,8); }
-function toast(text){ const el=document.getElementById('toast'); el.textContent=text; el.classList.add('show'); setTimeout(()=>el.classList.remove('show'),1400); }
+function toast(text){ const el=document.getElementById('toast'); el.textContent=text; el.classList.add('show'); setTimeout(()=>el.classList.remove('show'),1800); }
+function markPending(id){ if(!pending.includes(id)) pending.push(id); write(PENDING_KEY,pending); }
+function clearPending(id){ pending=pending.filter(x=>x!==id); write(PENDING_KEY,pending); }
 
 async function api(path, options={}){
   const headers={apikey:SUPABASE_KEY,'Content-Type':'application/json',...(options.headers||{})};
@@ -45,8 +49,9 @@ async function pullCloud(){
   return true;
 }
 
-async function saveCloud(device){
-  if(!auth?.access_token || !navigator.onLine) return;
+async function saveCloud(device, silent=false){
+  if(!auth?.access_token || !navigator.onLine) return false;
+  const pendingId=device.id;
   try{
     if(String(device.id).startsWith('local-')){
       const rows=await api('/rest/v1/devices',{method:'POST',headers:{Prefer:'return=representation'},body:JSON.stringify({name:device.name,contacts:device.contacts})});
@@ -55,14 +60,33 @@ async function saveCloud(device){
       await api('/rest/v1/devices?id=eq.'+encodeURIComponent(device.id),{method:'PATCH',body:JSON.stringify({name:device.name,contacts:device.contacts,updated_at:new Date().toISOString()})});
     }
     write(LOCAL_KEY,devices);
-    toast('Синхронизировано');
-  }catch(e){ console.warn('sync',e); }
+    clearPending(pendingId);
+    if(!silent) toast('Синхронизировано');
+    return true;
+  }catch(e){
+    markPending(pendingId);
+    if(!silent) toast('Ошибка синхронизации');
+    console.warn('sync',e);
+    return false;
+  }
+}
+
+async function syncPending(){
+  if(!auth?.access_token || !navigator.onLine || !pending.length) return;
+  const ids=[...pending];
+  for(const id of ids){
+    const device=devices.find(d=>d.id===id);
+    if(device) await saveCloud(device,true);
+    else clearPending(id);
+  }
 }
 
 function saveLocal(device){
   write(LOCAL_KEY,devices);
+  markPending(device.id);
   clearTimeout(syncTimer);
   syncTimer=setTimeout(()=>saveCloud(device),450);
+  if(!navigator.onLine) toast('Сохранено на устройстве');
 }
 
 function loginScreen(message=''){
@@ -73,7 +97,7 @@ function loginScreen(message=''){
   async function go(){
     if(!password.value.trim()){error.textContent='Введите пароль.';return;}
     button.disabled=true; button.textContent='Входим…'; error.textContent='';
-    try{ await login(password.value); await pullCloud(); render(); }
+    try{ await login(password.value); await syncPending(); await pullCloud(); render(); }
     catch(e){ button.disabled=false; button.textContent='Войти'; error.textContent=navigator.onLine?'Неверный пароль.':'Нет интернета для первого входа.'; }
   }
   button.onclick=go; password.onkeydown=e=>{if(e.key==='Enter')go()}; password.focus();
@@ -94,16 +118,9 @@ function colorOptions(selected=''){
   return `<option value="">Выберите цвет</option>`+COLORS.map(c=>`<option value="${c[0]}" ${c[0]===selected?'selected':''}>${c[1]}</option>`).join('');
 }
 
-function swatchStyle(c){
-  if(!c) return '';
-  if(!c[0].startsWith('white-')) return `background:${c[2]}`;
-  // Сделаем полоски достаточно широкими и повторяющимися, чтобы рисунок жилы был заметен даже на маленьком экране.
-  return `background:repeating-linear-gradient(90deg,#fff 0 9px,${c[2]} 9px 18px)`;
-}
-
 function contactRow(r,i){
   const c=COLORS.find(x=>x[0]===r.colorId);
-  const shown=c?`<span class="swatch ${c[0]}" style="${swatchStyle(c)}"></span><span class="colorText">${esc(c[1])}</span>`:'Не выбран';
+  const shown=c?`<span class="swatch ${c[0]}" style="background:${c[2]}"></span><span class="colorText">${esc(c[1])}</span>`:'Не выбран';
   return `<div class="row"><div class="contactField"><label>Контакт</label><input class="contact" data-i="${i}" value="${esc(r.contact)}" placeholder="Например: GND"></div><div class="colorField"><label>Цвет UTP</label>${c?`<div class="colorview" data-color="${i}">${shown}</div><select class="colorSelect hidden" data-i="${i}">${colorOptions(r.colorId)}</select>`:`<select class="colorSelect" data-i="${i}">${colorOptions()}</select>`}</div><div class="rowButtons">${c?`<button class="edit" data-i="${i}">ред.</button>`:''}<button class="del" data-i="${i}">×</button></div></div>`;
 }
 
@@ -112,7 +129,7 @@ function editorScreen(){
   app.innerHTML=`<div class="header"><button class="back" id="back">‹</button><h1>${esc(d.name)}</h1></div><div class="actions"><button class="secondary" id="rename">✎ Переименовать</button><button class="danger" id="remove">Удалить</button></div><div class="card"><b>Расключение</b><div class="muted subtitle">Контакт → цвет жилы UTP</div>${d.contacts.length?d.contacts.map(contactRow).join(''):`<div class="empty small"><span class="muted">Контактов пока нет.</span></div>`}<button class="secondary add" id="addContact">＋ Добавить контакт</button></div>`;
   document.getElementById('back').onclick=()=>{currentId=null;render()};
   document.getElementById('rename').onclick=()=>{const n=prompt('Новое название:',d.name);if(n?.trim()){d.name=n.trim();saveLocal(d);render();}};
-  document.getElementById('remove').onclick=async()=>{if(!confirm('Удалить устройство и его схему?'))return;try{if(!String(d.id).startsWith('local-'))await api('/rest/v1/devices?id=eq.'+encodeURIComponent(d.id),{method:'DELETE'});}catch(e){}devices=devices.filter(x=>x!==d);write(LOCAL_KEY,devices);currentId=null;render();};
+  document.getElementById('remove').onclick=async()=>{if(!confirm('Удалить устройство и его схему?'))return;try{if(!String(d.id).startsWith('local-'))await api('/rest/v1/devices?id=eq.'+encodeURIComponent(d.id),{method:'DELETE'});}catch(e){}clearPending(d.id);devices=devices.filter(x=>x!==d);write(LOCAL_KEY,devices);currentId=null;render();};
   document.getElementById('addContact').onclick=()=>{d.contacts.push({contact:'',colorId:''});saveLocal(d);render();};
   document.querySelectorAll('.contact').forEach(el=>el.oninput=()=>{d.contacts[+el.dataset.i].contact=el.value;saveLocal(d);});
   document.querySelectorAll('.edit').forEach(el=>el.onclick=()=>{const i=+el.dataset.i;const select=document.querySelector(`.colorSelect[data-i="${i}"]`);select.classList.remove('hidden');document.querySelector(`.colorview[data-color="${i}"]`)?.classList.add('hidden');select.focus();});
@@ -123,9 +140,9 @@ function editorScreen(){
 function render(){ auth?.access_token ? (currentId ? editorScreen() : homeScreen()) : loginScreen(); }
 
 async function boot(){
-  if(auth?.access_token && navigator.onLine){ try{await pullCloud();}catch(e){auth=null;localStorage.removeItem(AUTH_KEY);} }
+  if(auth?.access_token && navigator.onLine){ try{await syncPending(); await pullCloud();}catch(e){auth=null;localStorage.removeItem(AUTH_KEY);} }
   render();
 }
 
-window.addEventListener('online',async()=>{if(auth?.access_token){try{await pullCloud();render();}catch(e){}}});
+window.addEventListener('online',async()=>{if(auth?.access_token){try{await syncPending();await pullCloud();render();}catch(e){}}});
 boot();
