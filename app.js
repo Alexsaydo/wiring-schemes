@@ -5,10 +5,10 @@ const AUTH_KEY = 'wiring-auth-v3';
 const LOCAL_KEY = 'wiring-local-v3';
 
 const COLORS = [
-  ['white-orange','Бело-оранжевый','wo'], ['orange','Оранжевый','o'],
-  ['white-green','Бело-зелёный','wg'], ['green','Зелёный','g'],
-  ['white-blue','Бело-синий','wb'], ['blue','Синий','b'],
-  ['white-brown','Бело-коричневый','wbr'], ['brown','Коричневый','br']
+  ['white-orange','Бело-оранжевый','#f97316'], ['orange','Оранжевый','#f97316'],
+  ['white-green','Бело-зелёный','#22c55e'], ['green','Зелёный','#22c55e'],
+  ['white-blue','Бело-синий','#3b82f6'], ['blue','Синий','#3b82f6'],
+  ['white-brown','Бело-коричневый','#92400e'], ['brown','Коричневый','#92400e']
 ];
 
 const app = document.getElementById('app');
@@ -49,7 +49,7 @@ async function saveCloud(device){
   if(!auth?.access_token || !navigator.onLine) return;
   try{
     if(String(device.id).startsWith('local-')){
-      const rows=await api('/rest/v1/devices',{method:'POST',headers:{Prefer:'return=representation'},body:JSON.stringify({user_id:auth.user.id,name:device.name,contacts:device.contacts})});
+      const rows=await api('/rest/v1/devices',{method:'POST',headers:{Prefer:'return=representation'},body:JSON.stringify({name:device.name,contacts:device.contacts})});
       if(rows?.[0]) Object.assign(device,rows[0]);
     }else{
       await api('/rest/v1/devices?id=eq.'+encodeURIComponent(device.id),{method:'PATCH',body:JSON.stringify({name:device.name,contacts:device.contacts,updated_at:new Date().toISOString()})});
@@ -94,16 +94,10 @@ function colorOptions(selected=''){
   return `<option value="">Выберите цвет</option>`+COLORS.map(c=>`<option value="${c[0]}" ${c[0]===selected?'selected':''}>${c[1]}</option>`).join('');
 }
 
-function swatchStyle(kind){
-  const base={o:'#f97316',g:'#22c55e',b:'#3b82f6',br:'#92400e'}[kind];
-  const stripe={wo:'#f97316',wg:'#22c55e',wb:'#3b82f6',wbr:'#92400e'}[kind];
-  return stripe ? `background:repeating-linear-gradient(90deg,#fff 0 8px,${stripe} 8px 16px)` : `background:${base}`;
-}
-
 function contactRow(r,i){
   const c=COLORS.find(x=>x[0]===r.colorId);
-  const shown=c?`<span class="swatch" style="${swatchStyle(c[2])}"></span>${esc(c[1])}`:'Не выбран';
-  return `<div class="row"><div><label>Контакт</label><input class="contact" data-i="${i}" value="${esc(r.contact)}" placeholder="Например: GND"></div><div><label>Цвет UTP</label>${c?`<div class="colorview" data-color="${i}">${shown}</div><select class="colorSelect hidden" data-i="${i}">${colorOptions(r.colorId)}</select>`:`<select class="colorSelect" data-i="${i}">${colorOptions()}</select>`}</div><div class="rowButtons">${c?`<button class="edit" data-i="${i}">ред.</button>`:''}<button class="del" data-i="${i}">×</button></div></div>`;
+  const shown=c?`<span class="swatch ${c[0]}" style="background:${c[2]}"></span><span class="colorText">${esc(c[1])}</span>`:'Не выбран';
+  return `<div class="row"><div class="contactField"><label>Контакт</label><input class="contact" data-i="${i}" value="${esc(r.contact)}" placeholder="Например: GND"></div><div class="colorField"><label>Цвет UTP</label>${c?`<div class="colorview" data-color="${i}">${shown}</div><select class="colorSelect hidden" data-i="${i}">${colorOptions(r.colorId)}</select>`:`<select class="colorSelect" data-i="${i}">${colorOptions()}</select>`}</div><div class="rowButtons">${c?`<button class="edit" data-i="${i}">ред.</button>`:''}<button class="del" data-i="${i}">×</button></div></div>`;
 }
 
 function editorScreen(){
