@@ -1,5 +1,6 @@
-const CACHE='wiring-v18';
+const CACHE='wiring-v19';
 const ASSETS=['./','./index.html','./app-v8.js','./manifest.webmanifest','./icons/icon.svg'];
-self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)));self.skipWaiting()});
+const fixIndex=async r=>{if(!r||!r.ok)return r;const t=await r.text();const fixed=t.replace('top:calc(50% - 15px);transform:none;','top:50%;transform:translateY(-50%);').replace('top:calc(50% - 14.5px);transform:none;','top:50%;transform:translateY(-50%);');return new Response(fixed,{status:r.status,statusText:r.statusText,headers:r.headers})};
+self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(async c=>{for(const a of ASSETS){const r=await fetch(a);await c.put(a,a==='./index.html'?await fixIndex(r):r)}}));self.skipWaiting()});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x!==CACHE).map(x=>caches.delete(x)))));self.clients.claim()});
-self.addEventListener('fetch',e=>{if(e.request.method!=='GET')return;e.respondWith(caches.match(e.request).then(cached=>cached||fetch(e.request).then(r=>{const copy=r.clone();caches.open(CACHE).then(c=>c.put(e.request,copy));return r}).catch(()=>cached)))});
+self.addEventListener('fetch',e=>{if(e.request.method!=='GET')return;e.respondWith(caches.match(e.request).then(cached=>cached||fetch(e.request).then(async r=>{const out=e.request.url.endsWith('/index.html')||e.request.url.endsWith('/wiring-schemes/')?await fixIndex(r):r;const copy=out.clone();caches.open(CACHE).then(c=>c.put(e.request,copy));return out}).catch(()=>cached)))});
