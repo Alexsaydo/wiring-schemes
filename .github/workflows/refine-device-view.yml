@@ -1,0 +1,46 @@
+name: Refine device view
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/refine-device-view.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  refine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refine compact device view
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('index.html')
+          s = p.read_text(encoding='utf-8')
+          marker = '/* Compact device view v2 */'
+          if marker in s:
+              raise SystemExit(0)
+          css = '''/* Compact device view v2 */
+          .card>div[data-i]{display:grid!important;grid-template-columns:minmax(0,1fr) minmax(210px,44%);align-items:center!important;gap:20px!important;padding:18px 0!important;min-width:0!important}
+          .card>div[data-i]>div:first-child{font-size:21px!important;font-weight:750!important;min-width:0!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important}
+          .card>div[data-i]>div:last-child{width:100%!important;min-width:0!important;text-align:right!important}
+          .card>div[data-i] .wireSwatch{width:68px!important;height:34px!important;flex-basis:68px!important;margin:0!important;position:static!important}
+          .card>div[data-i] .wireSwatch.empty{background:#080e14!important}
+          @media(max-width:560px){.card>div[data-i]{grid-template-columns:minmax(0,1fr) minmax(175px,50%);gap:12px!important;padding:16px 0!important}.card>div[data-i]>div:first-child{font-size:19px!important}.card>div[data-i] .wireSwatch{width:62px!important;height:32px!important;flex-basis:62px!important}.card>div[data-i] span[style*="font-size:15px"]{font-size:15px!important}}
+          '''
+          s = s.replace('</style>', css + '</style>', 1)
+          p.write_text(s, encoding='utf-8')
+          PY
+
+      - name: Commit refined view
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git diff --cached --quiet && exit 0
+          git commit -m "Refine compact device view"
+          git push
